@@ -331,18 +331,26 @@ static gboolean
 check_serialized_icon (GVariant *value,
                        GError **error)
 {
-  g_autoptr(GIcon) icon = g_icon_deserialize (value);
+  const char *key;
+  g_autoptr(GVariant) value2 = NULL;
+  gboolean is_valid = FALSE;
 
-  if (!icon)
-    {
-      g_set_error_literal (error,
-                           XDG_DESKTOP_PORTAL_ERROR,
-                           XDG_DESKTOP_PORTAL_ERROR_INVALID_ARGUMENT,
-                           "invalid icon");
-      return FALSE;
-    }
+  if (!check_value_type ("icon", value, G_VARIANT_TYPE ("(sv)"), error))
+    return FALSE;
 
-  if (!G_IS_BYTES_ICON (icon) && !G_IS_THEMED_ICON (icon))
+  g_variant_get (value, "(&sv)", &key, &value2);
+
+  /* This are the same values as for GIcon but we don't want to limit ourself to only GIcons */
+  if (strcmp (key, "themed") == 0)
+    is_valid = g_variant_is_of_type (value2, G_VARIANT_TYPE_STRING_ARRAY);
+  else if (strcmp (key, "bytes") == 0)
+    is_valid = g_variant_is_of_type (value2, G_VARIANT_TYPE_BYTESTRING);
+  else
+    /* Don't set an error because we only want to remove the currently unsupported
+     * icon but not fail the entire notification request */
+    return FALSE;
+
+  if (!is_valid)
     {
       g_set_error_literal (error,
                            XDG_DESKTOP_PORTAL_ERROR,
@@ -354,14 +362,17 @@ check_serialized_icon (GVariant *value,
   return TRUE;
 }
 
-static gboolean
+static GVariant *
 check_notification (GVariant *notification,
                     GError **error)
 {
+  GVariantBuilder n;
   int i;
 
   if (!check_value_type ("notification", notification, G_VARIANT_TYPE_VARDICT, error))
-    return FALSE;
+    return NULL;
+
+  g_variant_builder_init (&n, G_VARIANT_TYPE_VARDICT);
 
   for (i = 0; i < g_variant_n_children (notification); i++)
     {
@@ -373,41 +384,49 @@ check_notification (GVariant *notification,
           strcmp (key, "body") == 0)
         {
           if (!check_value_type (key, value, G_VARIANT_TYPE_STRING, error))
-            return FALSE;
+            return NULL;
         }
       else if (strcmp (key, "icon") == 0)
         {
           if (!check_serialized_icon (value, error))
-            return FALSE;
+            {
+              if (error)
+                {
+                  return NULL;
+                }
+              else
+                {
+                  g_debug ("Unsupported notification icon type filtered from request");
+                  continue;
+                }
+            }
         }
       else if (strcmp (key, "priority") == 0)
         {
           if (!check_priority (value, error))
-            return FALSE;
+            return NULL;
         }
       else if (strcmp (key, "default-action") == 0)
         {
           if (!check_value_type (key, value, G_VARIANT_TYPE_STRING, error))
-            return FALSE;
+            return NULL;
         }
       else if (strcmp (key, "default-action-target") == 0)
         ;
       else if (strcmp (key, "buttons") == 0)
         {
           if (!check_buttons (value, error))
-            return FALSE;
+            return NULL;
         }
-      else
-        {
-          g_set_error (error,
-                       XDG_DESKTOP_PORTAL_ERROR,
-                       XDG_DESKTOP_PORTAL_ERROR_INVALID_ARGUMENT,
-                       "%s not valid key", key);
-          return FALSE;
-        }
+      else {
+        g_debug ("Unsupported notification property %s filtered from request", key);
+        continue;
+      }
+
+      g_variant_builder_add (&n, "{sv}", key, value);
     }
 
-  return TRUE;
+  return g_variant_ref_sink (g_variant_builder_end (&n));
 }
 
 static GVariant *
@@ -465,15 +484,19 @@ notification_handle_add_notification (XdpDbusNotification *object,
   g_autoptr(GTask) task = NULL;
   g_autoptr(GError) error = NULL;
   CallData *call_data;
+  g_autoptr(GVariant) notification2 = NULL;
 
-  if (!check_notification (notification, &error))
+  notification2 = check_notification (notification, &error);
+  g_clear_pointer (&notification, g_variant_unref);
+
+  if (!notification2)
     {
       g_prefix_error (&error, "invalid notification: ");
       g_dbus_method_invocation_return_gerror (invocation, error);
       return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  call_data = call_data_new (invocation, call->app_info, call->sender, arg_id, notification);
+  call_data = call_data_new (invocation, call->app_info, call->sender, arg_id, g_steal_pointer (&notification2));
   task = g_task_new (object, NULL, NULL, NULL);
   g_task_set_task_data (task, call_data, g_object_unref);
   g_task_run_in_thread (task, handle_add_in_thread_func);
