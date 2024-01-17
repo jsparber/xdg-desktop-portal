@@ -164,20 +164,25 @@ test_notification_bad_arg (void)
   g_autofree char *path = NULL;
   g_autoptr(GVariant) notification = NULL;
   const char *notification_s;
+  const char *exp_notification_s;
+  gulong id;
 
   notification_s = "{ 'title': <'test notification 3'>, "
                    "  'bodx': <'test notification body 3'> "
                    "}";
+
+  exp_notification_s = "{ 'title': <'test notification 3'> }";
+
 
   notification = g_variant_parse (G_VARIANT_TYPE_VARDICT, notification_s, NULL, NULL, &error);
   g_assert_no_error (error);
 
   keyfile = g_key_file_new ();
 
-  g_key_file_set_string (keyfile, "notification", "data", notification_s);
-  g_key_file_set_string (keyfile, "notification", "id", "test2");
+  g_key_file_set_string (keyfile, "notification", "data", exp_notification_s);
+  g_key_file_set_string (keyfile, "notification", "id", "test3");
   g_key_file_set_string (keyfile, "notification", "action", "action1");
-  g_key_file_set_boolean (keyfile, "backend", "expect-no-call", TRUE);
+  g_key_file_set_integer (keyfile, "backend", "delay", 200);
 
   path = g_build_filename (outdir, "notification", NULL);
   g_key_file_save_to_file (keyfile, path, &error);
@@ -185,11 +190,17 @@ test_notification_bad_arg (void)
 
   portal = xdp_portal_new ();
 
+  id = g_signal_connect (portal, "notification-action-invoked", G_CALLBACK (notification_action_invoked), keyfile);
+
   got_info = 0;
-  xdp_portal_add_notification (portal, "test3", notification, 0, NULL, notification_fail, NULL);
+  xdp_portal_add_notification (portal, "test3", notification, 0, NULL, notification_succeed, NULL);
 
   while (!got_info)
     g_main_context_iteration (NULL, TRUE);
+
+  g_signal_handler_disconnect (portal, id);
+
+  xdp_portal_remove_notification (portal, "test3");
 }
 
 void
@@ -200,22 +211,28 @@ test_notification_bad_priority (void)
   g_autoptr(GError) error = NULL;
   g_autofree char *path = NULL;
   g_autoptr(GVariant) notification = NULL;
+  const char *exp_notification_s;
   const char *notification_s;
+  gulong id;
 
   notification_s = "{ 'title': <'test notification 2'>, "
                    "  'body': <'test notification body 2'>, "
                    "  'priority': <'invalid'> "
                    "}";
 
+  exp_notification_s = "{ 'title': <'test notification 2'>, "
+                          "  'body': <'test notification body 2'> "
+                          "}";
+
   notification = g_variant_parse (G_VARIANT_TYPE_VARDICT, notification_s, NULL, NULL, &error);
   g_assert_no_error (error);
 
   keyfile = g_key_file_new ();
 
-  g_key_file_set_string (keyfile, "notification", "data", notification_s);
-  g_key_file_set_string (keyfile, "notification", "id", "test2");
+  g_key_file_set_string (keyfile, "notification", "data", exp_notification_s);
+  g_key_file_set_string (keyfile, "notification", "id", "test4");
   g_key_file_set_string (keyfile, "notification", "action", "action1");
-  g_key_file_set_boolean (keyfile, "backend", "expect-no-call", TRUE);
+  g_key_file_set_integer (keyfile, "backend", "delay", 200);
 
   path = g_build_filename (outdir, "notification", NULL);
   g_key_file_save_to_file (keyfile, path, &error);
@@ -223,11 +240,17 @@ test_notification_bad_priority (void)
 
   portal = xdp_portal_new ();
 
+  id = g_signal_connect (portal, "notification-action-invoked", G_CALLBACK (notification_action_invoked), keyfile);
+
   got_info = 0;
-  xdp_portal_add_notification (portal, "test4", notification, 0, NULL, notification_fail, NULL);
+  xdp_portal_add_notification (portal, "test4", notification, 0, NULL, notification_succeed, NULL);
 
   while (!got_info)
     g_main_context_iteration (NULL, TRUE);
+
+  g_signal_handler_disconnect (portal, id);
+
+  xdp_portal_remove_notification (portal, "test4");
 }
 
 void
@@ -239,11 +262,63 @@ test_notification_bad_button (void)
   g_autofree char *path = NULL;
   g_autoptr(GVariant) notification = NULL;
   const char *notification_s;
+  const char *exp_notification_s;
+  gulong id;
 
   notification_s = "{ 'title': <'test notification 5'>, "
                    "  'body': <'test notification body 5'>, "
                    "  'buttons': <[{'labex': <'button1'>, 'action': <'action1'>}, "
                    "               {'label': <'button2'>, 'action': <'action2'>}]> "
+                   "}";
+
+   exp_notification_s = "{ 'title': <'test notification 5'>, "
+                           "  'body': <'test notification body 5'>, "
+                           "  'buttons': <[{'label': <'button2'>, 'action': <'action2'>}]> "
+                           "}";
+
+  notification = g_variant_parse (G_VARIANT_TYPE_VARDICT, notification_s, NULL, NULL, &error);
+  g_assert_no_error (error);
+
+  keyfile = g_key_file_new ();
+
+  g_key_file_set_string (keyfile, "notification", "data", exp_notification_s);
+  g_key_file_set_string (keyfile, "notification", "id", "test5");
+  g_key_file_set_string (keyfile, "notification", "action", "action1");
+  g_key_file_set_integer (keyfile, "backend", "delay", 200);
+
+  path = g_build_filename (outdir, "notification", NULL);
+  g_key_file_save_to_file (keyfile, path, &error);
+  g_assert_no_error (error);
+
+  portal = xdp_portal_new ();
+
+  id = g_signal_connect (portal, "notification-action-invoked", G_CALLBACK (notification_action_invoked), keyfile);
+
+  got_info = 0;
+
+  xdp_portal_add_notification (portal, "test5", notification, 0, NULL, notification_succeed, NULL);
+
+  while (!got_info)
+    g_main_context_iteration (NULL, TRUE);
+
+  g_signal_handler_disconnect (portal, id);
+
+  xdp_portal_remove_notification (portal, "test5");
+}
+
+void
+test_notification_bad_notification (void)
+{
+  g_autoptr(XdpPortal) portal = NULL;
+  g_autoptr(GKeyFile) keyfile = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autofree char *path = NULL;
+  g_autoptr(GVariant) notification = NULL;
+  const char *notification_s;
+
+  notification_s = "{ 'title': <'test notification 5'>, "
+                   "  'body': <'test notification body 5'>, "
+                   "  'buttons': <'wrong button'> "
                    "}";
 
   notification = g_variant_parse (G_VARIANT_TYPE_VARDICT, notification_s, NULL, NULL, &error);
@@ -252,7 +327,7 @@ test_notification_bad_button (void)
   keyfile = g_key_file_new ();
 
   g_key_file_set_string (keyfile, "notification", "data", notification_s);
-  g_key_file_set_string (keyfile, "notification", "id", "test2");
+  g_key_file_set_string (keyfile, "notification", "id", "test6");
   g_key_file_set_string (keyfile, "notification", "action", "action1");
   g_key_file_set_boolean (keyfile, "backend", "expect-no-call", TRUE);
 
@@ -263,8 +338,10 @@ test_notification_bad_button (void)
   portal = xdp_portal_new ();
 
   got_info = 0;
-  xdp_portal_add_notification (portal, "test5", notification, 0, NULL, notification_fail, NULL);
+  xdp_portal_add_notification (portal, "test6", notification, 0, NULL, notification_fail, NULL);
 
   while (!got_info)
     g_main_context_iteration (NULL, TRUE);
+
+  xdp_portal_remove_notification (portal, "test6");
 }
