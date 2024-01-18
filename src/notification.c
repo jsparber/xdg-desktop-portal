@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <gio/gio.h>
+#include <gio/gunixfdlist.h>
 #include <gio/gunixoutputstream.h>
 
 #include "notification.h"
@@ -107,6 +108,7 @@ struct _CallData {
   char *sender;
   char *id;
   GVariant *notification;
+  GUnixFDList *fd_list;
 };
 
 G_DECLARE_FINAL_TYPE (CallData, call_data, CALL, DATA, GObject)
@@ -124,7 +126,8 @@ call_data_new (GDBusMethodInvocation *inv,
                XdpAppInfo            *app_info,
                const char            *sender,
                const char            *id,
-               GVariant              *notification)
+               GVariant              *notification,
+               GUnixFDList           *fd_list)
 {
   CallData *call_data = g_object_new (call_data_get_type(),  NULL);
 
@@ -134,6 +137,8 @@ call_data_new (GDBusMethodInvocation *inv,
   call_data->id = g_strdup (id);
   if (notification)
     call_data->notification = g_variant_ref (notification);
+  if (fd_list)
+    call_data->fd_list = g_object_ref (fd_list);
 
   return call_data;
 }
@@ -149,6 +154,8 @@ call_data_finalize (GObject *object)
   g_free (call_data->sender);
   if (call_data->notification)
     g_variant_unref (call_data->notification);
+  if (call_data->fd_list)
+    g_object_unref (call_data->fd_list);
 
   G_OBJECT_CLASS (call_data_parent_class)->finalize (object);
 }
@@ -359,9 +366,58 @@ validate_serialized_media (const char *key,
 }
 
 static gboolean
+parse_serialized_fd_media (GVariantBuilder  *builder,
+                           const char       *key,
+                           GVariant         *handle,
+                           XdpAppInfo       *app_info,
+                           GUnixFDList      *fd_list,
+                           GError          **error)
+{
+  int fd_id, fd;
+  g_autofree char *path = NULL;
+  GVariant *serialized_file_media = NULL;
+
+  if (!check_value_type ("file-descriptor", handle, G_VARIANT_TYPE_HANDLE, error))
+    return FALSE;
+
+  if (!G_IS_UNIX_FD_LIST (fd_list))
+    {
+      g_set_error_literal (error,
+                           XDG_DESKTOP_PORTAL_ERROR,
+                           XDG_DESKTOP_PORTAL_ERROR_INVALID_ARGUMENT,
+                           "Expected valid GUnixFDList");
+      return FALSE;
+    }
+
+  fd_id = g_variant_get_handle (handle);
+  fd = g_unix_fd_list_get (fd_list, fd_id, error);
+
+  if (fd == -1)
+    return FALSE;
+
+  path = xdp_app_info_get_path_for_fd (app_info, fd, 0, NULL, NULL, error);
+  close (fd);
+
+  if (path == NULL)
+    return FALSE;
+
+  /* This is a serialized GFileIcon but there is no point in creating an object and then deserializing it */
+  serialized_file_media = g_variant_new ("(sv)",
+                                        "file",
+                                        g_variant_new_take_string (g_steal_pointer (&path)));
+
+  if (validate_serialized_media (key, serialized_file_media))
+    g_variant_builder_add (builder, "{sv}", key, serialized_file_media);
+
+  return TRUE;
+}
+
+static gboolean
 parse_serialized_media (GVariantBuilder  *builder,
                         const char       *key,
                         GVariant         *media,
+                        XdpAppInfo       *app_info,
+                        GUnixFDList      *fd_list,
                         GError          **error)
 {
   const char *key2;
@@ -392,6 +448,11 @@ parse_serialized_media (GVariantBuilder  *builder,
       if (validate_serialized_media (key, media))
         g_variant_builder_add (builder, "{sv}", key, media);
     }
+  else if (strcmp (key2, "file-descriptor") == 0)
+   {
+      if (!parse_serialized_fd_media (builder, key, value, app_info, fd_list, error))
+        return FALSE;
+    }
   else
     {
       g_debug ("Unsupported %s %s filtered from notification", key, key2);
@@ -403,6 +464,8 @@ parse_serialized_media (GVariantBuilder  *builder,
 static gboolean
 parse_serialized_icon (GVariantBuilder  *builder,
                        GVariant         *icon,
+                       XdpAppInfo       *app_info,
+                       GUnixFDList      *fd_list,
                        GError          **error)
 {
   /* Since the specs allow a single string as icon name we need to keep support for it */
@@ -423,7 +486,7 @@ parse_serialized_icon (GVariantBuilder  *builder,
         }
     }
 
-   if (!parse_serialized_media (builder, "icon", icon, error))
+   if (!parse_serialized_media (builder, "icon", icon, app_info, fd_list, error))
      {
        g_prefix_error (error, "invalid icon: ");
        return FALSE;
@@ -435,6 +498,8 @@ parse_serialized_icon (GVariantBuilder  *builder,
 static gboolean
 parse_notification (GVariantBuilder  *builder,
                     GVariant         *notification,
+                    XdpAppInfo       *app_info,
+                    GUnixFDList      *fd_list,
                     GError          **error)
 {
   int i;
@@ -458,7 +523,7 @@ parse_notification (GVariantBuilder  *builder,
         }
       else if (strcmp (key, "icon") == 0)
         {
-          if (!parse_serialized_icon (builder, value, error))
+          if (!parse_serialized_icon (builder, value, app_info, fd_list, error))
             return FALSE;
         }
       else if (strcmp (key, "priority") == 0)
@@ -506,7 +571,8 @@ add_in_thread_finished_cb (GObject      *source_object,
   if (g_task_propagate_boolean (G_TASK (result), &error))
     {
       xdp_dbus_notification_complete_add_notification (XDP_DBUS_NOTIFICATION (source_object),
-                                                       call_data->inv);
+                                                       call_data->inv,
+                                                       NULL);
     }
   else
     {
@@ -540,7 +606,11 @@ handle_add_in_thread_func (GTask        *task,
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE_VARDICT);
 
-  if (!parse_notification (&builder, call_data->notification, &error))
+  if (!parse_notification (&builder,
+                           call_data->notification,
+                           call_data->app_info,
+                           call_data->fd_list,
+                           &error))
     {
       g_variant_builder_clear (&builder);
 
@@ -563,6 +633,7 @@ handle_add_in_thread_func (GTask        *task,
 static gboolean
 notification_handle_add_notification (XdpDbusNotification *object,
                                       GDBusMethodInvocation *invocation,
+                                      GUnixFDList *fd_list,
                                       const char *arg_id,
                                       GVariant *notification)
 {
@@ -571,7 +642,12 @@ notification_handle_add_notification (XdpDbusNotification *object,
   g_autoptr(GError) error = NULL;
   CallData *call_data;
 
-  call_data = call_data_new (invocation, call->app_info, call->sender, arg_id, notification);
+  call_data = call_data_new (invocation,
+                             call->app_info,
+                             call->sender,
+                             arg_id,
+                             notification,
+                             fd_list);
   task = g_task_new (object, NULL, add_in_thread_finished_cb, NULL);
   g_task_set_task_data (task, call_data, g_object_unref);
   g_task_run_in_thread (task, handle_add_in_thread_func);
@@ -611,7 +687,12 @@ notification_handle_remove_notification (XdpDbusNotification *object,
                                          const char *arg_id)
 {
   Call *call = call_from_invocation (invocation);
-  CallData *call_data = call_data_new (invocation, call->app_info, call->sender, arg_id, NULL);
+  CallData *call_data = call_data_new (invocation,
+                                       call->app_info,
+                                       call->sender,
+                                       arg_id,
+                                       NULL,
+                                       NULL);
 
   xdp_dbus_impl_notification_call_remove_notification (impl,
                                                        xdp_app_info_get_id (call->app_info),

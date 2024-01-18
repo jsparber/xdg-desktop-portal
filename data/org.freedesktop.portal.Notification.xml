@@ -118,6 +118,7 @@
             Target parameter to send along when activating the action.
       -->
     <method name="AddNotification">
+      <annotation name="org.gtk.GDBus.C.UnixFD" value="true"/>
       <arg type="s" name="id" direction="in"/>
       <arg type="a{sv}" name="notification" direction="in"/>
     </method>
