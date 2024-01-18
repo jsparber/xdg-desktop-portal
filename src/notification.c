@@ -343,8 +343,44 @@ check_serialized_icon (GVariant *value)
     return g_variant_is_of_type (value2, G_VARIANT_TYPE_STRING_ARRAY);
   else if (strcmp (key, "bytes") == 0)
     return g_variant_is_of_type (value2, G_VARIANT_TYPE_BYTESTRING);
+  else if (strcmp (key, "file-descriptor") == 0)
+    return g_variant_is_of_type (value2, G_VARIANT_TYPE_HANDLE);
 
   return FALSE;
+}
+
+static void
+maybe_create_serialized_file_icon (XdpAppInfo *app_info,
+                                   GUnixFDList *fd_list,
+                                   GVariant  **value)
+{
+  const char *key;
+  g_autoptr(GVariant) handle = NULL;
+  int fd_id, fd;
+  g_autofree char *path = NULL;
+  g_autoptr(GFile) file = NULL;
+  g_autoptr(GError) error = NULL;
+
+  g_variant_get (*value, "(&sv)", &key, &handle);
+
+  if (strcmp (key, "file-descriptor") != 0)
+      return;
+
+  fd_id = g_variant_get_handle (handle);
+
+  fd = g_unix_fd_list_get (fd_list, fd_id, &error);
+  path = xdp_app_info_get_path_for_fd (app_info, fd, 0, NULL, NULL, &error);
+
+  g_clear_pointer (value, g_variant_unref);
+
+  if (path == NULL)
+    {
+      g_warning ("File descriptor for notification icon isn't valid: %s", error->message);
+      return;
+    }
+
+  file = g_file_new_for_path (path);
+  *value = g_icon_serialize (g_file_icon_new (file));
 }
 
 static GVariant *
@@ -377,6 +413,10 @@ maybe_remove_property (GVariant *notification)
               g_debug ("Unsupported notification icon filtered from request");
               continue;
             }
+            maybe_create_serialized_file_icon (app_info, fd_list, &value);
+
+            if (!value)
+              continue;
         }
       else if (strcmp (key, "priority") == 0)
         {
@@ -454,6 +494,7 @@ handle_add_in_thread_func (GTask *task,
 static gboolean
 notification_handle_add_notification (XdpDbusNotification *object,
                                       GDBusMethodInvocation *invocation,
+                                      GUnixFDList *fd_list,
                                       const char *arg_id,
                                       GVariant *notification)
 {
@@ -463,6 +504,11 @@ notification_handle_add_notification (XdpDbusNotification *object,
   CallData *call_data;
 
   if (!check_value_type ("notification", notification, G_VARIANT_TYPE_VARDICT, error))
+
+  notification2 = check_notification (call->app_info, notification, fd_list, &error);
+  g_clear_pointer (&notification, g_variant_unref);
+
+  if (!notification2)
     {
       g_prefix_error (&error, "invalid notification: ");
       g_dbus_method_invocation_return_gerror (invocation, error);
@@ -474,7 +520,7 @@ notification_handle_add_notification (XdpDbusNotification *object,
   g_task_set_task_data (task, call_data, g_object_unref);
   g_task_run_in_thread (task, handle_add_in_thread_func);
 
-  xdp_dbus_notification_complete_add_notification (object, invocation);
+  xdp_dbus_notification_complete_add_notification (object, invocation, NULL);
 
   return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
