@@ -384,7 +384,10 @@ maybe_create_serialized_file_icon (XdpAppInfo *app_info,
 }
 
 static GVariant *
-maybe_remove_property (GVariant *notification)
+maybe_remove_property (XdpAppInfo *app_info,
+                       GVariant *notification,
+                       GUnixFDList *fd_list,
+                       GError **error)
 {
   GVariantBuilder n;
   int i;
@@ -502,10 +505,9 @@ notification_handle_add_notification (XdpDbusNotification *object,
   g_autoptr(GTask) task = NULL;
   g_autoptr(GError) error = NULL;
   CallData *call_data;
+  g_autoptr(GVariant) notification2 = NULL;
 
-  if (!check_value_type ("notification", notification, G_VARIANT_TYPE_VARDICT, error))
-
-  notification2 = check_notification (call->app_info, notification, fd_list, &error);
+  notification2 = maybe_remove_property (call->app_info, notification, fd_list, &error);
   g_clear_pointer (&notification, g_variant_unref);
 
   if (!notification2)
@@ -515,7 +517,7 @@ notification_handle_add_notification (XdpDbusNotification *object,
       return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  call_data = call_data_new (invocation, call->app_info, call->sender, arg_id, notification);
+  call_data = call_data_new (invocation, call->app_info, call->sender, arg_id, g_steal_pointer (&notification2));
   task = g_task_new (object, NULL, NULL, NULL);
   g_task_set_task_data (task, call_data, g_object_unref);
   g_task_run_in_thread (task, handle_add_in_thread_func);
