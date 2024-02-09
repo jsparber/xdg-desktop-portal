@@ -383,6 +383,63 @@ maybe_create_serialized_file_icon (XdpAppInfo *app_info,
   *value = g_icon_serialize (g_file_icon_new (file));
 }
 
+static gboolean
+check_serialized_sound (GVariant *value)
+{
+  const char *key;
+  g_autoptr(GVariant) value2 = NULL;
+
+  if (!g_variant_is_of_type (value, G_VARIANT_TYPE ("(sv)")))
+    return FALSE;
+
+  g_variant_get (value, "(&sv)", &key, &value2);
+
+  /* Let's use the same serialization format as we use for icons */
+  if (strcmp (key, "themed") == 0)
+    return g_variant_is_of_type (value2, G_VARIANT_TYPE_STRING_ARRAY);
+  else if (strcmp (key, "bytes") == 0)
+    return g_variant_is_of_type (value2, G_VARIANT_TYPE_BYTESTRING);
+  else if (strcmp (key, "file-descriptor") == 0)
+    return g_variant_is_of_type (value2, G_VARIANT_TYPE_HANDLE);
+
+  return FALSE;
+}
+
+static void
+maybe_create_serialized_file_sound (XdpAppInfo *app_info,
+                                   GUnixFDList *fd_list,
+                                   GVariant  **value)
+{
+  const char *key;
+  g_autoptr(GVariant) handle = NULL;
+  int fd_id, fd;
+  g_autofree char *path = NULL;
+  g_autoptr(GFile) file = NULL;
+  g_autoptr(GError) error = NULL;
+
+  g_variant_get (*value, "(&sv)", &key, &handle);
+
+  if (strcmp (key, "file-descriptor") != 0)
+      return;
+
+  fd_id = g_variant_get_handle (handle);
+
+  fd = g_unix_fd_list_get (fd_list, fd_id, &error);
+  path = xdp_app_info_get_path_for_fd (app_info, fd, 0, NULL, NULL, &error);
+
+  g_clear_pointer (value, g_variant_unref);
+
+  if (path == NULL)
+    {
+      g_warning ("File descriptor for notification sound isn't valid: %s", error->message);
+      return;
+    }
+
+  file = g_file_new_for_path (path);
+  // We use the same format as for GFileIcons. The format is pretty nice and there is no point in adding something different.
+  *value = g_variant_new ("(sv)", "file", g_variant_new_take_string (g_file_get_uri (file)));
+}
+
 static GVariant *
 maybe_remove_property (XdpAppInfo *app_info,
                        GVariant *notification,
@@ -417,6 +474,19 @@ maybe_remove_property (XdpAppInfo *app_info,
               continue;
             }
             maybe_create_serialized_file_icon (app_info, fd_list, &value);
+
+            if (!value)
+              continue;
+        }
+      else if (strcmp (key, "sound") == 0)
+        {
+          // TODO: Needs validation like for the icon
+          if (!check_serialized_sound (value))
+            {
+              g_debug ("Unsupported notification sound filtered from request");
+              continue;
+            }
+            maybe_create_serialized_file_sound (app_info, fd_list, &value);
 
             if (!value)
               continue;
