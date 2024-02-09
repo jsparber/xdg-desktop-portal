@@ -349,13 +349,62 @@ parse_buttons (GVariantBuilder  *builder,
 }
 
 static gboolean
+validate_serialized_media (const char *key,
+                           GVariant   *serialized_media)
+{
+  if (strcmp (key, "icon") == 0)
+      return xdp_validate_serialized_icon (serialized_media, FALSE, NULL, NULL);
+
+  return TRUE;
+}
+
+static gboolean
+parse_serialized_media (GVariantBuilder  *builder,
+                        const char       *key,
+                        GVariant         *media,
+                        GError          **error)
+{
+  const char *key2;
+  g_autoptr(GVariant) value = NULL;
+
+  if (!check_value_type (key, media, G_VARIANT_TYPE("(sv)"), error))
+    return FALSE;
+
+  g_variant_get (media, "(&sv)", &key2, &value);
+
+  /* This are the same keys as for serialized GIcons */
+  /* This are the same variants as for GIcon but let's not depend on an
+   * implementation detail of GIO and maybe we want to implement more
+   * types in the future */
+  if (strcmp (key2, "themed") == 0)
+    {
+      if (!check_value_type (key2, value, G_VARIANT_TYPE_STRING_ARRAY, error))
+        return FALSE;
+
+      if (validate_serialized_media (key, media))
+        g_variant_builder_add (builder, "{sv}", key, media);
+    }
+  else if (strcmp (key2, "bytes") == 0)
+    {
+      if (!check_value_type (key2, value, G_VARIANT_TYPE_BYTESTRING, error))
+        return FALSE;
+
+      if (validate_serialized_media (key, media))
+        g_variant_builder_add (builder, "{sv}", key, media);
+    }
+  else
+    {
+      g_debug ("Unsupported %s %s filtered from notification", key, key2);
+    }
+
+  return TRUE;
+}
+
+static gboolean
 parse_serialized_icon (GVariantBuilder  *builder,
                        GVariant         *icon,
                        GError          **error)
 {
-  const char *key;
-  g_autoptr(GVariant) value = NULL;
-
   /* Since the specs allow a single string as icon name we need to keep support for it */
   if (g_variant_is_of_type (icon, G_VARIANT_TYPE_STRING))
     {
@@ -374,36 +423,11 @@ parse_serialized_icon (GVariantBuilder  *builder,
         }
     }
 
-  if (!check_value_type ("icon", icon, G_VARIANT_TYPE("(sv)"), error))
-    return FALSE;
-
-  g_variant_get (icon, "(&sv)", &key, &value);
-
-  /* This are the same keys as for serialized GIcons */
-  if (strcmp (key, "themed") == 0)
-    {
-      if (!check_value_type (key, value, G_VARIANT_TYPE_STRING_ARRAY, error))
-        {
-          g_prefix_error (error, "invalid icon: ");
-          return FALSE;
-        }
-    }
-  else if (strcmp (key, "bytes") == 0)
-    {
-      if (!check_value_type (key, value, G_VARIANT_TYPE_BYTESTRING, error))
-        {
-          g_prefix_error (error, "invalid icon: ");
-          return FALSE;
-        }
-    }
-  else
-    {
-      g_debug ("Unsupported icon %s filtered from notification", key);
-      return TRUE;
-    }
-
-  if (xdp_validate_serialized_icon (icon, FALSE, NULL, NULL))
-    g_variant_builder_add (builder, "{sv}", "icon", icon);
+   if (!parse_serialized_media (builder, "icon", icon, error))
+     {
+       g_prefix_error (error, "invalid icon: ");
+       return FALSE;
+     }
 
   return TRUE;
 }
