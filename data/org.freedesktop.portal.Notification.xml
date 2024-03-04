@@ -34,14 +34,48 @@
       activated again.
 
       Notifications can specify actions that can be activated by the
-      user. Actions whose name starts with 'app.' are assumed to be
-      exported and will be activated via the ActivateAction()
-      method in the org.freedesktop.Application interface. Other
-      actions are activated by sending the
-      #org.freedesktop.portal.Notification::ActionInvoked signal
-      to the application.
+      user. Actions will be activated via the ActivateAction()
+      method in the org.freedesktop.Application interface.
 
-      This documentation describes version 1 of this interface.
+      Notification buttons can use special action names called preset
+      to let the system style the buttons in a special way.
+
+      TODO: I think system presets should use there own property e.g. ``system-actions`` property
+
+      * ``system.request-custom-alert``:
+
+        Preset action that will be called by the server whenever the notification is shown.
+
+        This allows apps to use custom methods of alerting the user, for example to play audio
+        from a special source like a streaming service or a radio station.
+
+        This preset will place be a pair ``(ss)`` placed in ``parameter`` of the ``ActivateAction`` call.
+        Where the first string is the key ``presentation-policy`` and the second one is one of the following policies:
+
+        TODO: The policies needs a better description, since they are really vague.
+
+        * ``may-not-alert``:
+
+          The app may not alert the user in any way.
+
+          TODO: we should probably not invoke the preset at all, since the app isn't allowed to do anything.
+
+        * ``may-alert-interrupting``:
+
+          The app may alert in a way that is interrupting the user and only the user, e.g. by playing sound on headphones. TODO: How does the app now that headphones are plugged in?
+
+        * ``may-alert-very-interrupting``:
+
+          The app may alert the user in a way that is interrupting the user and potentially other people, e.g. by playing a sound on the speakers.
+
+        Clients must adhere to the specified policy when alerting the user.
+        The notification server might invoke this action multiple times, e.g again when the notification is displayed again.
+
+      * ``system.request-immediate-activation``:
+        TODO: this should maybe be part of the ``system.request-custom-alert`` preset
+
+
+      This documentation describes version 2 of this interface.
   -->
   <interface name="org.freedesktop.portal.Notification">
     <!--
@@ -58,28 +92,94 @@
         The format of the serialized notification is a vardict, with
         the following supported keys, all of which are optional:
 
+        * ``application-id`` (``s``)
+
+          An optional application id.
+          This can be the flatpak application id including a postfix.
+          E.g ``org.libreoffice.LibreOffice.Writer`` where
+          ``org.libreoffice.LibreOffice`` is the flatpak application id.
+          See `Application IDs <https://flatpak-docs.readthedocs.io/en/latest/conventions.html>`_.
+
+          If this property isn't set it will be picked up automatically, if possible.
+
         * ``title`` (``s``)
 
           User-visible string to display as the title.
+          The title should be a short string, if is to
+          long it may not be fully displayed.
 
         * ``body`` (``s``)
 
-          User-visible string to display as the body.
+          User-visible string to display as the body of the notification.
+          This can be a long description but note that if it is to long
+          it may not be fully displayed.
+
+        * ``markup-body`` (``s``)
+
+          User-visible body description of the notification formatted with markup.
+          The markup is XML-based and supports a small subset of HTML
+          ``<b>...</b>``, ``<i>...</i>`` and ``<a href="...">...</a>``
+
+          This can be a long string but note that it may not be fully displayed.
 
         * ``icon`` (``v``)
 
-          Serialized icon (see `g_icon_serialize()
-          <https://docs.gtk.org/gio/method.Icon.serialize.html>`_).
+          A serialized icon to add to the notification.
+          Supported image formats are png, jpeg or svg.
 
-          The portal only accepts serialized GThemedIcon and GBytesIcons. Both of
-          these have the form (sv). For themed icons, the string is "themed",
-          and the value is an array of strings containing the icon names.
-          For bytes icons, the string is "bytes", and the value is a bytestring
-          containing the icon data in png, jpeg or svg form. For historical
-          reasons, it is also possible to send a simple string for themed
-          icons with a single icon name.
+          The format for
+          serialized icon is a tuple (sv) with the following supported keys:
+
+          * ``themed`` (``as``)
+
+            A themed icon containing an array of strings with the icon names.
+
+            This is the same format as a serialized `GThemedIcon
+            <https://docs.gtk.org/gio/class.ThemedIcon.html>`_.
+
+          * ``bytes`` (``ay``)
+
+            A bytes icon containing a bytestring with the icon data in
+            png, jpeg or svg form.
+
+            This is the same format as a serialized `GBytesIcon
+            <https://docs.gtk.org/gio/class.BytesIcon.html>`_.
+
+          * ``file-descriptor`` (``h``)
+
+            A file descriptor to an image file in png, jpeg or svg form.
+
+          For historical reasons, it is also possible to send a simple string
+          for themed icons with a single icon name.
 
           There may be further restrictions on the supported kinds of icons.
+
+        * ``icon-alt`` (``s``)
+
+          A textual replacement for the icon.
+          This is used for accessibility, screen readers will read out this description.
+
+        * ``image`` (``v``)
+
+          A serialized image to add to the body of the notification. The format for
+          serialized ``image`` is the same as for ``icon``.
+          Supported image formats are png, jpeg or svg.
+
+        * ``image-alt`` (``s``)
+
+          A textual replacement for the image inside the body.
+          This is used for accessibility, screen readers will read out this description.
+
+        * ``progress`` (``a{sv}``)
+
+          If set a progress bar will be shown in the notification.
+
+          TODO: we probably need more options here, maybe labels.
+          See https://developer.android.com/reference/android/widget/ProgressBar
+
+          * ``value`` (``d``)
+
+            The ``value`` of the progress in range between ``0.0`` and ``1.0``
 
         * ``priority`` (``s``)
 
@@ -116,11 +216,299 @@
           * ``target`` (``v``)
 
             Target parameter to send along when activating the action.
+
+        * ``presentation-hints`` (``a{sv}``)
+
+          Presentation hints allow specifying how a notification should be presented.
+          This are suggestions to the system and it may ignore any hint.
+
+          TODO: I wonder if presentation-hints should just go into the notification dictionary,
+          since it's not always clear whether a property should be a presentation hint or not.
+
+          * ``content-hint`` (``s``)
+
+            The content hint describes the type of content of a notification.
+            A notification server may use this information to display the
+            notification in a special way. Some content hints also include
+            pre defined action names that will be connected to buttons that
+            are styled in a special way called ``preset``.
+
+            The following types are defined by the protocol so far:
+
+            * ``im.message``
+
+              Intended for instant messaging apps displaying notifications for new messages.
+
+              This hint has the following pre defined actions:
+
+              * ``preset.im.reply-with-text``:
+
+                Inline replies for instant messaging apps.
+                The response will be placed in ``parameter`` of the ``ActivateAction`` call
+                as pair ``(ss)``, where the first value is the key ``reply-text``;
+
+            * ``alarm.ringing``
+
+              Intended for alarm clocks apps
+
+            * ``call.incoming``
+
+              Intended for calls apps to notify the user about an incoming call.
+
+              This hint has the following pre defined actions:
+
+              * ``preset.accept``:
+
+                Accept the incoming call.
+
+              * ``preset.decline``:
+
+                Decline the incoming call.
+
+            * ``call.ongoing``
+
+              Intended for calls apps while a call is ongoing.
+
+              This hint has the following pre defined actions:
+
+              * ``preset.decline``:
+
+                Hang up the ongoing call.
+
+              * ``preset.enable-speakerphone``:
+
+                Enable speakerphone for the ongoing call.
+
+              * ``preset.disable-speakerphone``:
+
+                Disable speakerphone for the ongoing call.
+
+            * ``call.missed``
+
+              Intended to be used by calls apps when a call was missed.
+
+            * ``weather.warning.extreme``
+
+              Intended to be used as for displaying extreme weather warnings.
+
+            * ``cellbroadcast.danger.extreme``
+
+              TODO: Intended to be used as for displaying extreme danger warnings that were broadcasted by the cell network.
+
+            * ``cellbroadcast.danger.severe``
+
+              TODO: Intended to be used as for displaying extreme danger warnings that were broadcasted by the cell network.
+
+            * ``cellbroadcast.amberalert``
+
+              TODO: Write description
+
+            * ``cellbroadcast.test``
+
+              TODO: Write description
+
+            * ``os.battery.low``
+
+              Intended to be used to indicate that the system is low on battery.
+
+            * ``browser.web-notification``
+
+              Intended to be used by browsers to mark notifications as web notifications
+
+            Additional types may be defined with a vendor specific prefix in from of "x-vendor"
+
+          * ``sound`` (``v``)
+
+          A serialized sound to add to the notification.
+          Supported image formats are oga and wav.
+
+          The format for
+          serialized sound is a tuple (sv) with the following supported keys:
+
+          * ``themed`` (``as``)
+
+            A themed sound containing an array of strings with the themeable
+            named sound icon names, similar to an icon names.
+
+          * ``bytes`` (``ay``)
+
+            A bytes sound containing a bytestring with the sound data.
+
+            This is the same format as a serialized `GBytesIcon
+            <https://docs.gtk.org/gio/class.BytesIcon.html>`_.
+
+          * ``file-descriptor`` (``h``)
+
+            A file descriptor to a sound file.
+
+          * ``silent``
+
+            A "silent" sound indicating that no sound should be played for the notification
+
+          There may be further restrictions on the supported kinds of sounds.
+
+          * ``vibration`` (``au``)
+
+            Vibration pattern is an array of uint32 to describing
+            alternating periods in which the device should vibrate and not vibrate in milliseconds.
+            This array can contain a odd number of items since the last non vibrating period can be omitted.
+
+            An empty array indicates to ignore system settings and don't vibrate.
+
+            This similar API to `Web Vibration API <https://developer.mozilla.org/en-US/docs/Web/API/Vibration_API>`_.
+
+          * ``led-color`` (``(yyyy)``)
+
+            Notification LED color as 4 bytes value ``(red, green, blue, alpha)``.
+
+            A tuple of ``(0000)`` indicates to ignore system settings and don't turn on the LED.
+
+          * ``display-hint`` (``as``)
+
+            An array of ways to display the notification. If none are set, or the server has it's own policy, the server is
+            free to decide how and where to display the notification.
+
+            * ``transient``
+
+              The notification is displayed only as a banner and won't be kept
+              by the server in a tray.
+
+              It's a programmer error to specify ``tray`` at the same time.
+
+            * ``tray``
+
+              No banner for the notification will be displayed and
+              the notification is placed in the tray.
+
+              It's a programmer error to specify ``transient`` at the same time.
+
+            * ``persistent``
+
+              Make the notification persistent in the notification tray.
+              This makes the notification remain at the top (TODO: really on top or just in the tray?)
+              of the tray and the user can’t dismiss it using the usual close button or gesture.
+
+              Apps are only allowed to display persistent notifications as long as they have a window.
+              Once the last window of an app is closed the persistent notification will be removed.
+
+              TODO: what's a use case for this? GNOME Shell has odd behavior for notifications that come from an app with a window (especially when focused)
+              See: https://bugzilla.gnome.org/show_bug.cgi?id=630847#c12
+
+            * ``hide-on-lockscreen``
+
+              Don't show the notification on the lockscreen.
+
+            * ``hide-content-on-lockscreen``
+
+              Only show the notification ``title`` and ``icon`` on the lockscreen.
+
+            * ``show-as-new``
+
+              If an notification with the same ``id`` of the app exists already replace the previous notification,
+              by removing the old notification (including animation etc) and adding a new notification.
+
+              If this hint isn't specified the notification is updated without any flickering.
+
+          * ``grouping`` (``a{sv}``)
+            Notifications can be grouped together, this is often called threading.
+            For example this is useful for multiple message in the same chat.
+
+            * ``id`` (``s``)
+              Notifications with the same id will be grouped together.
+
+            * ``title`` (``s``)
+              The title of the notification group.
+
+            * ``icon`` (``v``)
+              The icon of the notification group. This is the same format as the notification ``icon`` property
+
+            * ``icon-alt`` (``s``)
+              A textual replacement for the notification group icon.
+              This is used for accessibility, screen readers will read out this description.
       -->
     <method name="AddNotification">
       <arg type="s" name="id" direction="in"/>
       <arg type="a{sv}" name="notification" direction="in"/>
     </method>
+
+    <!--
+        ListSupportedProperties:
+        @supported_properties: A list of supported properties and there supported values if applicable
+
+
+        Returns a list of supported properties with
+        specific values if applicable for the property.
+
+        Applications only need to check this list for support of a property
+        if they want to implement a fallback for it to ensure that user is
+        correctly notified.
+
+        The server will probably only return a subset,
+        including the supported properties, of the following list:
+
+        * ``application-id``
+        * ``title``
+        * ``body``
+        * ``icon``
+
+          - ``themed``
+          - ``bytes``
+          - ``file-descriptor``
+
+        * ``priority`` (``as``)
+
+          - ``low``
+          - ``normal``
+          - ``high``
+          - ``urgent``
+
+        * ``default-action``
+        * ``default-action-target``
+        * ``buttons`` (``a{sv}``)
+
+          - ``label``
+          - ``action``
+          - ``target``
+
+        * ``presentation-hints`` (``a{sv}``)
+
+          * ``content`` (``as``)
+
+            - ``im.message``
+            - ``alarm.ringing``
+            - ``call.incoming``
+            - ``call.ongoing``
+            - ``call.missed``
+            - ``weather.warning.extreme``
+            - ``cellbroadcast.danger.extreme``
+            - ``cellbroadcast.danger.severe``
+            - ``cellbroadcast.amberalert``
+            - ``cellbroadcast.test``
+            - ``os.battery.low``
+            - ``browser.webNotification``
+
+          * ``sound`` (``a{sv}``)
+
+            - ``themed``
+            - ``bytes``
+            - ``file-descriptor``
+            - ``silent``
+
+          * ``vibration``
+          * ``led-color``
+          * ``display-hint`` (``as``)
+
+            - ``transient``
+            - ``tray``
+            - ``persistent``
+            - ``hide-on-lockscreen``
+            - ``hide-content-on-lockscreen``
+            - ``show-as-new``
+    -->
+    <method name="ListSupportedProperties">
+      <arg type="a{sv}" name="supported_properties" direction="out"/>
+    </method>
+
     <!--
         RemoveNotification:
         @id: Application-provided ID for this notification
@@ -131,20 +519,6 @@
       <arg type="s" name="id" direction="in"/>
     </method>
 
-    <!--
-        ActionInvoked:
-        @id: the application-provided ID for the notification
-        @action: the name of the action
-        @parameter: array which will contain the target parameter for the action, if one was specified
-
-        Send to the application when a non-exported action is
-        activated.
-    -->
-    <signal name="ActionInvoked">
-      <arg type="s" name="id"/>
-      <arg type="s" name="action"/>
-      <arg type="av" name="parameter"/>
-    </signal>
     <property name="version" type="u" access="read"/>
   </interface>
 </node>
