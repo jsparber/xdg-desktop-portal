@@ -496,6 +496,23 @@ parse_serialized_icon (GVariantBuilder  *builder,
 }
 
 static gboolean
+parse_serialized_sound (GVariantBuilder  *builder,
+                        GVariant         *sound,
+                        XdpAppInfo       *app_info,
+                        GUnixFDList      *fd_list,
+                        GError          **error)
+{
+  gboolean res;
+
+  res = parse_serialized_media (builder, "sound", sound, app_info, fd_list, error);
+
+  if (*error)
+    g_prefix_error (error, "invalid sound: ");
+
+  return res;
+}
+
+static gboolean
 parse_notification (GVariantBuilder  *builder,
                     GVariant         *notification,
                     XdpAppInfo       *app_info,
@@ -524,6 +541,11 @@ parse_notification (GVariantBuilder  *builder,
       else if (strcmp (key, "icon") == 0)
         {
           if (!parse_serialized_icon (builder, value, app_info, fd_list, error))
+            return FALSE;
+        }
+      else if (strcmp (key, "sound") == 0)
+        {
+          if (!parse_serialized_sound (builder, value, app_info, fd_list, error))
             return FALSE;
         }
       else if (strcmp (key, "priority") == 0)
