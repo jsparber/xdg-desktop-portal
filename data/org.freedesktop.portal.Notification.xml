@@ -95,6 +95,29 @@
 
           There may be further restrictions on the supported kinds of icons.
 
+        * ``sound`` (``v``)
+
+          A serialized sound to add to the notification. The format for
+          serialized sound is a tuple (sv) with the following supported keys:
+
+          * ``themed`` (``as``)
+
+            A themed sound containing an array of strings with the themeable
+            named sound icon names, similar to an icon names.
+
+          * ``bytes`` (``ay``)
+
+            A bytes sound containing a bytestring with the sound data.
+
+            This is the same format as a serialized `GBytesIcon
+            <https://docs.gtk.org/gio/class.BytesIcon.html>`_.
+
+          * ``file-descriptor`` (``h``)
+
+            A file descriptor to a sound file.
+
+          There may be further restrictions on the supported kinds of sounds.
+
         * ``priority`` (``s``)
 
           The priority for the notification. Supported values:
