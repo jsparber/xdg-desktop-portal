@@ -110,6 +110,11 @@ typedef enum {
   AUTOSTART_FLAGS_ACTIVATABLE = 1 << 0,
 } AutostartFlags;
 
+typedef enum {
+  ALAMR_TIME_FLAGS_NONE = 0,
+  ALAMR_TIME_FLAGS_WAKE_SYSTEM = 1 << 0,
+} AlarmTimeFlags;
+
 static GVariant *
 get_all_permissions (void)
 {
@@ -177,6 +182,18 @@ get_one_permission (const char *app_id,
 
 static Permission
 get_permission (const char *app_id)
+{
+  g_autoptr(GVariant) perms = NULL;
+
+  perms = get_all_permissions ();
+  if (perms)
+    return get_one_permission (app_id, perms);
+
+  return PERMISSION_UNSET;
+}
+
+static Permission
+get_alarm_time_permission (const char *app_id)
 {
   g_autoptr(GVariant) perms = NULL;
 
@@ -699,6 +716,8 @@ handle_request_background_in_thread_func (GTask *task,
   GVariant *options;
   const char *id;
   Permission permission;
+  Permission alarm_time_permission;
+  Permission wake_system_permission;
   const char *reason = NULL;
   gboolean autostart_requested = FALSE;
   gboolean autostart_enabled;
@@ -708,6 +727,8 @@ handle_request_background_in_thread_func (GTask *task,
   AutostartFlags autostart_flags = AUTOSTART_FLAGS_NONE;
   gboolean activatable = FALSE;
   g_auto(GStrv) commandline = NULL;
+  guint32 alarm_time_requested = 0;
+  gboolean wake_system = FALSE;
 
   REQUEST_AUTOLOCK (request);
 
@@ -716,6 +737,8 @@ handle_request_background_in_thread_func (GTask *task,
   g_variant_lookup (options, "autostart", "b", &autostart_requested);
   g_variant_lookup (options, "commandline", "^a&s", &autostart_exec);
   g_variant_lookup (options, "dbus-activatable", "b", &activatable);
+  g_variant_lookup (options, "alarm-time", "u", &alarm_time_requested);
+  g_variant_lookup (options, "wake-system", "b", &wake_system_requested);
 
   if (activatable)
     autostart_flags |= AUTOSTART_FLAGS_ACTIVATABLE;
@@ -723,13 +746,19 @@ handle_request_background_in_thread_func (GTask *task,
   id = xdp_app_info_get_id (request->app_info);
 
   if (xdp_app_info_is_host (request->app_info))
-    permission = PERMISSION_YES;
+    {
+      permission = PERMISSION_YES;
+      alarm_time_permission = PERMISSION_YES;
+    }
   else
-    permission = get_permission (id);
+    {
+      permission = get_permission (id);
+      alarm_time_permission = get_alarm_time_permission (id, &wake_system_permission);
+    }
 
   g_debug ("Handle RequestBackground for '%s'", id);
 
-  if (permission == PERMISSION_ASK)
+  if (permission == PERMISSION_ASK || alarm_time_permission == PERMISSION_ASK)
     {
       GVariantBuilder opt_builder;
       g_autofree char *app_id = NULL;
