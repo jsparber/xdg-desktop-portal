@@ -36,7 +36,7 @@
         @options: Vardict with optional further information
         @handle: Object path for the :ref:`org.freedesktop.portal.Request` object representing this call
 
-        Requests that the application is allowed to run in the background.
+        Requests that the application is allowed to run in the background or set timers to start the application.
 
         Supported keys in the @options vardict include:
 
@@ -64,6 +64,17 @@
 
           true to use D-Bus activation for autostart.
 
+        * ``alarm-time`` (``u``)
+
+          If set the application requests to set alarm times.
+          The following permissions can be requested:
+          - ``NONE``: 0
+          - ``INEXACT``: 1
+          - ``PRECISE``: 2
+
+        ** ``wake-system`` (``b``)
+
+          Whether the application requests to set alarm times that can wake the system from sleep state.
 
         The following results get returned via the :ref:`org.freedesktop.portal.Request::Response` signal:
 
@@ -74,11 +85,107 @@
         * ``autostart`` (``b``)
 
           true if the application is will be autostarted.
+
+        * ``alarm-time`` (``u``)
+
+          If the application is allowed to set alarm times one of the following permissions is returned:
+
+          - ``NONE``: 0
+          - ``INEXACT``: 1
+          - ``PRECISE``: 2
+
+        ** ``wake-system`` (``b``)
+
+          If true the application can set alarm times that wake the system from sleep state.
     -->
     <method name="RequestBackground">
       <arg type="s" name="parent_window" direction="in"/>
       <arg type="a{sv}" name="options" direction="in"/>
       <arg type="o" name="handle" direction="out"/>
+    </method>
+
+    <!--
+        AddAlarmTimes:
+        @times: An array of vardicts containing alarm times.
+
+        Takes an array of alarm times at which the application should be started or activated.
+
+        The following properties are supported for each alarm time:
+
+        * ``id`` (``s``)
+          The mandatory ID of the alarm time. This can be used to replace or remove an alarm time.
+
+        * ``time`` (``x``)
+
+          The time the application should be started in milliseconds since 1970-01-01 00:00:00 UTC or
+          since the last boot if ``since-boot`` is set to true.
+          If ``time`` is in the past the application is started or activated immediately.
+
+        * ``precise`` (``b``)
+
+          Whether the application should be started at the exact time specified.
+          If this is not specified or set to false the application start or activation
+          may be delayed to group it with other alarm times to reduce the number of times the system needs to wake up.
+          This should be set to true only when the application must be started or activated at the precise time. E.g. alarm clocks.
+
+        * ``end-time`` (``x``)
+
+          If specifed the system will start the application in the time frame between ``time`` and ``end-time``
+          The given time is in milliseconds since 1970-01-01 00:00:00 UTC or
+          since the last boot if ``since-boot`` is set to true.
+          If the given time is in the past the application is started or activated immediately.
+          It's a programmer error if ``end-time`` is earlier then ``time``.
+
+        * ``interval`` (``x``)
+
+          The interval at which the application should be started or activated.
+          The intervals are never precise and the system tries to batch alarm times in order to minimize
+          the number of times the system needs to be woken.
+          If the alarm time is delayed, no time drift for future alarm times will occur.
+
+        * ``wake-system`` (``b``)
+
+          Whether the alarm time should wake the system from the sleep state.
+          If false the application launch is postponed till the system is woken for some other reason.
+
+        * ``since-boot`` (``b``)
+
+          Whether the alarm time should be considered as a delay since boot.
+
+        * ``commandline`` (``as``)
+
+          The command line used to start the application.
+          If neither ``dbus-action`` nor ``commandline`` is specified, the same method as for autostarting the application is used.
+
+        * ``dbus-action`` (``(sav)``)
+
+          The DBus action used to activate the application. This implies that the application supports D-Bus Activation.
+          If neither ``dbus-action`` nor ``commandline`` is specified, the same method as for autostarting the application is used.
+    -->
+    <method name="AddAlarmTimes">
+      <arg type="aa{sv}" name="times" direction="in"/>
+    </method>
+
+    <!--
+        RemoveAlarmTimes:
+        @times: An array of alarm time IDs that should be removed.
+
+        An array of alarm time IDs that should be removed.
+        If an empty array is given all alarm times for the application are removed.
+    -->
+    <method name="RemoveAlarmTimes">
+      <arg type="as" name="times" direction="in"/>
+    </method>
+
+    <!--
+        ListAlarmTimes:
+        @times: An array of alarm times set via #org.freedesktop.portal.Background::AddAlarmTimes.
+
+        Returns an array of alarm times that are currently set to start or activate the application.
+        Each vardict in the array has the same properties as the vardict in #org.freedesktop.portal.Background::AddAlarmTimes.
+    -->
+    <method name="ListAlarmTimes">
+      <arg type="aa{sv}" name="times" direction="out"/>
     </method>
 
     <!--
